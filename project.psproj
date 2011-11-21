@@ -1,5 +1,5 @@
 ﻿[PyScripter]
-Version=2.4.3.0
+Version=2.4.4.0
 
 [Project]
 ClassName=TProjectRootNode
@@ -8,6 +8,13 @@ ShowFileExtensions=FALSE
 
 [Project\ChildNodes\Node0]
 ClassName=TProjectFilesNode
+
+[Project\ChildNodes\Node0\ChildNodes\Node0]
+ClassName=TProjectFileNode
+FileName=E:\projects\script-to-analyze-wikipedia-and-build-people-graphs-v2\load_wiki_xml_cat.py
+
+[Project\ChildNodes\Node0\ChildNodes]
+Count=1
 
 [Project\ChildNodes\Node1]
 ClassName=TProjectRunConfiguationsNode
