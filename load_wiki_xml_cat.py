@@ -1,4 +1,5 @@
-﻿#-------------------------------------------------------------------------------
+#!/usr/bin/env python
+#-------------------------------------------------------------------------------
 # Name:    load_wiki_xml_cat.py
 # Purpose:
 #   Loads Wikipedia "Living people" category article ursl and all child urls
@@ -9,7 +10,6 @@
 # Created:   2011-11-20
 # Licence:   WTFPL
 #-------------------------------------------------------------------------------
-#!/usr/bin/env python
 
 from xml.parsers import expat
 import re
@@ -135,32 +135,36 @@ CREATE TABLE IF NOT EXISTS article_category (
     if tag == tagTitle:
       self._title = self._data
     elif tag == tagPage:
+      print "Parsing page %s\n" % self._title 
       self._text = self._data
+      cur = self.db().cursor()
       categories = category_re.findall( self._text)
       is_living_person = False
       for c in categories:
         if c == self._living_person_category:
           is_living_person = True
-        self.db().execute( "INSERT OR IGNORE INTO category (name) VALUES (?)", ( c,) )
+        cur.execute( "INSERT OR IGNORE INTO category (name) VALUES (?)", ( c,) )
       if is_living_person:
-        self.db().execute(
+        cur.execute(
           "INSERT OR REPLACE INTO article (title,is_living_person,parsed_at) VALUES (?,1,datetime('now'))",
           ( self._title, ) )
       else:
-        self.db().execute(
+        cur.execute(
           "INSERT OR IGNORE INTO article (title,is_living_person,parsed_at) VALUES (?,0,NULL)",
           ( self._title, ) )
       for c in categories:
         if c == self._living_person_category:
           is_living_person = True
-        self.db().execute(
+        cur.execute(
           """INSERT OR IGNORE INTO article_category (article_id,category_id)
           VALUES (
             (SELECT id FROM article WHERE title=?),
             (SELECT id FROM category WHERE name=?)
           )""", ( self._title, c) )
+      self.db().commit()
+      cur.close()
       # TODO: links to related pages
-
+      
     pass
     self._tag = self._parent_tag
     self._parent_tag = None
