@@ -30,10 +30,10 @@ tagTitle = xmlNs+xmlNsSeparator+'title'
 tagId = xmlNs+xmlNsSeparator+'id'
 tagText = xmlNs+xmlNsSeparator+'text'
 tagRevision = xmlNs+xmlNsSeparator+'revision'
+tagMediawiki = xmlNs+xmlNsSeparator+'mediawiki'
+
 
 # Pre-copiled regular expressions:
-port_range_re = re.compile('(\d{1,6})-(\d{1,6})')
-stip_re = re.compile('reserved|unassigned', re.I)
 category_re = re.compile('Category:([^]]*)]', re.M|re.I )
 
 def get_args():
@@ -60,7 +60,7 @@ class WPParser:
     # current element tag
     self._tag = None
     # Last parsed page subelemt values
-    self._cn = self._id = self._title = self._text = self._value = None
+    self._cur = self._cn = self._id = self._title = self._text = self._value = None
 
     self._living_person_category = living_person_category
 
@@ -75,7 +75,7 @@ class WPParser:
     self._parser.CharacterDataHandler = self.data
 
   def _initDb(self):
-    self._cn = sqlite3.connect('wppages2.sqlite')
+    self._cn = sqlite3.connect('wppages4.sqlite')
     self._cn.executescript("""
 -- DROP TABLE IF EXISTS category;
 CREATE TABLE IF NOT EXISTS category (
@@ -100,11 +100,17 @@ CREATE TABLE IF NOT EXISTS article_category (
     category_id INTEGER NOT NULL,
     PRIMARY KEY(article_id,category_id) );
 """)
+    self._cn.commit()
 
   def db(self):
     if self._cn == None:
       self._initDb()
     return self._cn
+
+  def cur(self):
+    if self._cur == None:
+      self._cur = self.db().cursor()
+    return self._cur
 
   def reset(self):
     "Reste parser in order to parse subsequent documents"
@@ -133,39 +139,41 @@ CREATE TABLE IF NOT EXISTS article_category (
 
   def end(self, tag):
     if tag == tagTitle:
-      self._title = self._data
+      self._title = self._data.strip()
     elif tag == tagPage:
-      print "Parsing page %s\n" % self._title 
+      # print "Parsing page %s\n" % self._title
       self._text = self._data
-      cur = self.db().cursor()
-      categories = category_re.findall( self._text)
-      is_living_person = False
-      for c in categories:
-        if c == self._living_person_category:
-          is_living_person = True
-        cur.execute( "INSERT OR IGNORE INTO category (name) VALUES (?)", ( c,) )
+      # [item for sublist in l for item in sublist]
+      categories = [item.strip() for sublist in
+                      [ cat.split('|') for cat in category_re.findall( self._text)]
+                    for item in sublist]
+      if categories:
+        is_living_person = ( self._living_person_category in categories )
+        self.cur().executemany(
+          "INSERT OR IGNORE INTO category (name) VALUES (?)",
+          [ (c,) for c in  categories ] )
+      else:
+        is_living_person = False
       if is_living_person:
-        cur.execute(
+        self.cur().execute(
           "INSERT OR REPLACE INTO article (title,is_living_person,parsed_at) VALUES (?,1,datetime('now'))",
           ( self._title, ) )
       else:
-        cur.execute(
+        self._cur.execute(
           "INSERT OR IGNORE INTO article (title,is_living_person,parsed_at) VALUES (?,0,NULL)",
           ( self._title, ) )
-      for c in categories:
-        if c == self._living_person_category:
-          is_living_person = True
-        cur.execute(
+      if categories:
+        self._cur.executemany(
           """INSERT OR IGNORE INTO article_category (article_id,category_id)
           VALUES (
             (SELECT id FROM article WHERE title=?),
             (SELECT id FROM category WHERE name=?)
-          )""", ( self._title, c) )
+          )""",
+          [ ( self._title, c) for c in categories ] )
       self.db().commit()
-      cur.close()
-      # TODO: links to related pages
-      
-    pass
+    elif tag == tagMediawiki:
+      self.cur().close()
+
     self._tag = self._parent_tag
     self._parent_tag = None
 
