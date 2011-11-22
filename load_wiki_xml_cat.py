@@ -75,18 +75,18 @@ class WPParser:
     self._parser.CharacterDataHandler = self.data
 
   def _initDb(self):
-    self._cn = sqlite3.connect('wppages.sqlite')
+    self._cn = sqlite3.connect('wppages2.sqlite')
     self._cn.executescript("""
 -- DROP TABLE IF EXISTS category;
 CREATE TABLE IF NOT EXISTS category (
-    id        INTEGER NOT NULL PRIMARY KEY,
+    id        INTEGER PRIMARY KEY,
     name      TEXT    NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS category_name_idx ON category(name);
 
 -- DROP TABLE IF EXISTS article;
 CREATE TABLE IF NOT EXISTS article (
-    id      INTEGER NOT NULL PRIMARY KEY,
+    id      INTEGER PRIMARY KEY,
     title   TEXT NOT NULL,
     is_living_person BOOLEAN NOT NULL DEFAULT FALSE,
     parent_id INTEGER NULL,
