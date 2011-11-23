@@ -77,30 +77,37 @@ class WPParser:
     self._parser.CharacterDataHandler = self.data
 
   def _initDb(self):
-    self._cn = sqlite3.connect('wppages4.sqlite')
+    self._cn = sqlite3.connect('wppages6.sqlite')
     self._cn.executescript("""
 -- DROP TABLE IF EXISTS category;
 CREATE TABLE IF NOT EXISTS category (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT    NOT NULL
+  id        INTEGER PRIMARY KEY,
+  name      TEXT    NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS category_name_idx ON category(name);
 
 -- DROP TABLE IF EXISTS article;
 CREATE TABLE IF NOT EXISTS article (
-    id      INTEGER PRIMARY KEY,
-    title   TEXT NOT NULL,
-    is_living_person BOOLEAN NOT NULL DEFAULT FALSE,
-    parent_id INTEGER NULL,
-    parsed_at DATETIME NULL
+  id      INTEGER PRIMARY KEY,
+  title   TEXT NOT NULL,
+  is_living_person BOOLEAN NOT NULL DEFAULT FALSE,
+  -- The most recently detected parent (parsed artilce with link to the page)
+  parent_id INTEGER NULL,
+  parsed_at DATETIME NULL
  );
 CREATE UNIQUE INDEX IF NOT EXISTS article_title_idx ON article(title);
 
 -- DROP TABLE IF EXISTS article_category;
 CREATE TABLE IF NOT EXISTS article_category (
-    article_id INTEGER NOT NULL,
-    category_id INTEGER NOT NULL,
-    PRIMARY KEY(article_id,category_id) );
+  article_id INTEGER NOT NULL,
+  category_id INTEGER NOT NULL,
+  PRIMARY KEY( article_id, category_id) );
+
+-- DROP TABLE IF EXISTS link;
+CREATE TABLE IF NOT EXISTS link (
+  article_id INTEGER NOT NULL,
+  ref_article_id INTEGER NOT NULL );
+CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
 """)
     self._cn.commit()
 
@@ -156,31 +163,37 @@ CREATE TABLE IF NOT EXISTS article_category (
           [ (c,) for c in  categories ] )
       else:
         is_living_person = False
-      if is_living_person:
-        self.cur().execute(
-          "INSERT OR REPLACE INTO article (title,is_living_person,parsed_at) VALUES (?,1,datetime('now'))",
-          ( self._title, ) )
-      else:
+      self.cur().execute(
+        "INSERT OR IGNORE INTO article (title,is_living_person,parsed_at) VALUES (?,?,datetime('now'))",
+        ( self._title, is_living_person ) )
+      article_id = self._cur.lastrowid
+      if article_id == None:
         self._cur.execute(
-          "INSERT OR IGNORE INTO article (title,is_living_person,parsed_at) VALUES (?,0,NULL)",
-          ( self._title, ) )
+          "UPDATE article SET is_living_person=?, parsed_at=datetime('now') WHERE title=?",
+          ( is_living_person, self._title ) )
+        article_id = self._cur.lastrowid
       if categories:
-        # TODO: pageID - to boost performance
         self._cur.executemany(
           """INSERT OR IGNORE INTO article_category (article_id,category_id)
-          VALUES (
-            (SELECT id FROM article WHERE title=?),
-            (SELECT id FROM category WHERE name=?)
-          )""",
-          [ ( self._title, c) for c in categories ] )
+          SELECT ?, id FROM category WHERE name=?""",
+          [ ( article_id, c) for c in categories ] )
       children = [item.strip() for sublist in
                     [ cat.split('|') for cat in child_re.findall( self._text)]
                   for item in sublist]
       if children:
-        # TODO: Parent pageID:
+        # TODO: Parent page ID:
         self.cur().executemany(
-          "INSERT OR REPLACE INTO category (name) VALUES (?)",
-          [ (c,) for c in  children ] )
+          "INSERT OR IGNORE INTO article (title) VALUES (?)",
+          [ (title,) for title in  children ] )
+        self.cur().executemany(
+          "UPDATE article SET parent_id=? WHERE title=?",
+          [ (article_id, title) for title in  children ] )
+        self._cur.execute(
+          """INSERT OR IGNORE INTO link
+            (article_id, ref_article_id)
+            SELECT parent_id, id
+            FROM article
+            WHERE parent_id=?""", (article_id,))
       self.db().commit()
     elif tag == tagMediawiki:
       self.cur().close()
