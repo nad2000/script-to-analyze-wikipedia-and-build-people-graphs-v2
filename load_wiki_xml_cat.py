@@ -35,6 +35,8 @@ tagMediawiki = xmlNs+xmlNsSeparator+'mediawiki'
 
 # Pre-copiled regular expressions:
 category_re = re.compile('Category:([^]]*)]', re.M|re.I )
+# Links to the child pages:
+child_re = re.compile( '\[\[(?!Category:)([^]]*)]]', re.M|re.I)
 
 def get_args():
   """
@@ -163,6 +165,7 @@ CREATE TABLE IF NOT EXISTS article_category (
           "INSERT OR IGNORE INTO article (title,is_living_person,parsed_at) VALUES (?,0,NULL)",
           ( self._title, ) )
       if categories:
+        # TODO: pageID - to boost performance
         self._cur.executemany(
           """INSERT OR IGNORE INTO article_category (article_id,category_id)
           VALUES (
@@ -170,6 +173,14 @@ CREATE TABLE IF NOT EXISTS article_category (
             (SELECT id FROM category WHERE name=?)
           )""",
           [ ( self._title, c) for c in categories ] )
+      children = [item.strip() for sublist in
+                    [ cat.split('|') for cat in child_re.findall( self._text)]
+                  for item in sublist]
+      if children:
+        # TODO: Parent pageID:
+        self.cur().executemany(
+          "INSERT OR REPLACE INTO category (name) VALUES (?)",
+          [ (c,) for c in  children ] )
       self.db().commit()
     elif tag == tagMediawiki:
       self.cur().close()
