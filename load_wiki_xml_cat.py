@@ -184,7 +184,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
           [ (c,) for c in  categories ] )
       else:
         is_living_person = False
-      self._cur.execute(
+      self.cur().execute(
         "INSERT OR IGNORE INTO article (title,is_living_person,parsed_at) VALUES (?,?,datetime('now'))",
         ( self._title, is_living_person, ) )
       article_id = self._cur.lastrowid
@@ -226,7 +226,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
       print "\n%d articles processed." % self._page_count
       print "Parsing complete! Please wait until DB compacting is finised..."
       self.db().execute('VACUUM')
-      
+
 
     self._tag = self._parent_tag
     self._parent_tag = None
