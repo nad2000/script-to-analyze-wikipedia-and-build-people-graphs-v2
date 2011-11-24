@@ -14,7 +14,7 @@
 from xml.parsers import expat
 import re
 import sys
-import urllib, os
+import urllib, os, os.path
 import sqlite3
 import argparse
 
@@ -67,6 +67,7 @@ class WPParser:
     self._living_person_category = living_person_category
 
     self._page_count = 0
+    self._chunk_size = 1
     self._data_start = False
 
   def _init_parser(self):
@@ -77,35 +78,47 @@ class WPParser:
     self._parser.CharacterDataHandler = self.data
 
   def _initDb(self):
-    self._cn = sqlite3.connect('wppages6.sqlite')
+    self._cn = sqlite3.connect('wppages4.sqlite')
     self._cn.executescript("""
+PRAGMA encoding = "UTF-8";
+PRAGMA page_size = 8192; -- 16384;
+PRAGMA synchronous = OFF;
+-- PRAGMA journal_mode = OFF;
+PRAGMA journal_mode = MEMORY;
+-- PRAGMA count_changes = OFF;
+PRAGMA cache_size = 10000; -- Default: 2000
+PRAGMA temp_store = MEMORY;
+PRAGMA locking_mode=EXCLUSIVE;
+
+
 -- DROP TABLE IF EXISTS category;
 CREATE TABLE IF NOT EXISTS category (
-  id        INTEGER PRIMARY KEY,
-  name      TEXT    NOT NULL
+  id     INTEGER PRIMARY KEY,
+  name   TEXT    NOT NULL UNIQUE
 );
-CREATE UNIQUE INDEX IF NOT EXISTS category_name_idx ON category(name);
 
 -- DROP TABLE IF EXISTS article;
 CREATE TABLE IF NOT EXISTS article (
-  id      INTEGER PRIMARY KEY,
-  title   TEXT NOT NULL,
+  id               INTEGER PRIMARY KEY,
+  title            TEXT NOT NULL UNIQUE,
+  -- Article is about a living person (deteced based on the category)
   is_living_person BOOLEAN NOT NULL DEFAULT FALSE,
   -- The most recently detected parent (parsed artilce with link to the page)
-  parent_id INTEGER NULL,
-  parsed_at DATETIME NULL
+  parent_id        INTEGER NULL,
+  parsed_at        DATETIME NULL
  );
-CREATE UNIQUE INDEX IF NOT EXISTS article_title_idx ON article(title);
 
 -- DROP TABLE IF EXISTS article_category;
 CREATE TABLE IF NOT EXISTS article_category (
-  article_id INTEGER NOT NULL,
-  category_id INTEGER NOT NULL,
-  PRIMARY KEY( article_id, category_id) );
+  id          INTEGER PRIMARY KEY,
+  article_id  INTEGER NOT NULL,
+  category_id INTEGER NOT NULL );
+CREATE UNIQUE INDEX IF NOT EXISTS article_category_idx ON article_category(article_id, category_id);
 
 -- DROP TABLE IF EXISTS link;
 CREATE TABLE IF NOT EXISTS link (
-  article_id INTEGER NOT NULL,
+  id             INTEGER PRIMARY KEY,
+  article_id     INTEGER NOT NULL,
   ref_article_id INTEGER NOT NULL );
 CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
 """)
@@ -122,7 +135,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     return self._cur
 
   def reset(self):
-    "Reste parser in order to parse subsequent documents"
+    "Reset parser in order to parse subsequent documents"
     self.close()
     self.__init__()
 
@@ -130,6 +143,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     self._parser.Parse(data, 0)
 
   def feedFile(self, fileName):
+    """
+    Observed performace: 35MiB (4338 articles) in 1:40
+    Average size of an article: 8650
+    """
+    self._page_count_aprox = os.path.getsize( fileName ) / 8650
+    self._chunk_size = max( self._page_count_aprox / 80, 1)
+    print "Expected approximately %d articles" % self._page_count_aprox
+    print "One tick (#): approximately %d articles processed" % self._chunk_size
     self._file= open( fileName, mode='rb')
     self._parser.ParseFile( self._file)
     self._file.close()
@@ -142,7 +163,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     self._data_start = False
     if tag == tagPage:
       self._id = self._title = self._text = None
-      ++self._page_count
+      self._page_count += 1
     self._parent_tag = self._tag
     self._tag = tag
 
@@ -152,7 +173,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     elif tag == tagPage:
       # print "Parsing page %s\n" % self._title
       self._text = self._data
-      # [item for sublist in l for item in sublist]
+      article_id = None
       categories = [item.strip() for sublist in
                       [ cat.split('|') for cat in category_re.findall( self._text)]
                     for item in sublist]
@@ -163,40 +184,49 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
           [ (c,) for c in  categories ] )
       else:
         is_living_person = False
-      self.cur().execute(
+      self._cur.execute(
         "INSERT OR IGNORE INTO article (title,is_living_person,parsed_at) VALUES (?,?,datetime('now'))",
-        ( self._title, is_living_person ) )
+        ( self._title, is_living_person, ) )
       article_id = self._cur.lastrowid
       if article_id == None:
         self._cur.execute(
           "UPDATE article SET is_living_person=?, parsed_at=datetime('now') WHERE title=?",
-          ( is_living_person, self._title ) )
+          ( is_living_person, self._title, ) )
         article_id = self._cur.lastrowid
+      assert article_id != None
       if categories:
         self._cur.executemany(
           """INSERT OR IGNORE INTO article_category (article_id,category_id)
-          SELECT ?, id FROM category WHERE name=?""",
-          [ ( article_id, c) for c in categories ] )
+          VALUES (?, (SELECT id FROM category WHERE name=?) )""",
+          [ ( article_id, c,) for c in categories ] )
       children = [item.strip() for sublist in
                     [ cat.split('|') for cat in child_re.findall( self._text)]
                   for item in sublist]
       if children:
-        # TODO: Parent page ID:
-        self.cur().executemany(
+        self._cur.executemany(
           "INSERT OR IGNORE INTO article (title) VALUES (?)",
           [ (title,) for title in  children ] )
-        self.cur().executemany(
+        # set up the article_id as the last detected page referencing the child:
+        self._cur.executemany(
           "UPDATE article SET parent_id=? WHERE title=?",
           [ (article_id, title) for title in  children ] )
+        # collect all links in the article in the "link" table:
         self._cur.execute(
           """INSERT OR IGNORE INTO link
             (article_id, ref_article_id)
             SELECT parent_id, id
             FROM article
             WHERE parent_id=?""", (article_id,))
-      self.db().commit()
+      if self._page_count % self._chunk_size == 0:
+        sys.stderr.write('#')
+        self.db().commit()
     elif tag == tagMediawiki:
+      # The end of XML dump file reached - do clean-up:
       self.cur().close()
+      print "\n%d articles processed." % self._page_count
+      print "Parsing complete! Please wait until DB compacting is finised..."
+      self.db().execute('VACUUM')
+      
 
     self._tag = self._parent_tag
     self._parent_tag = None
@@ -206,7 +236,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     if not(self._data_start):
       self._data = ''
       self._data_start = True
-
     self._data += data
 
 
