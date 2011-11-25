@@ -11,7 +11,7 @@ ClassName=TProjectFilesNode
 
 [Project\ChildNodes\Node0\ChildNodes\Node0]
 ClassName=TProjectFileNode
-FileName=E:\projects\script-to-analyze-wikipedia-and-build-people-graphs-v2\load_wiki_xml_cat.py
+FileName=E:\projects\script-to-analyze-wikipedia-and-build-people-graphs-v2\load_wiki_xml.py
 
 [Project\ChildNodes\Node0\ChildNodes]
 Count=1
