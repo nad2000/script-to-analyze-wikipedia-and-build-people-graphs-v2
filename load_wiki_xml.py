@@ -1,4 +1,4 @@
-#!/usr/bin/env python -OO
+﻿#!/usr/bin/env python -OO
 """TODO: module description"""
 #-------------------------------------------------------------------------------
 # Name:    load_wiki_xml_cat.py
@@ -20,21 +20,8 @@ import sqlite3
 import argparse
 import time
 
-def print_timing(func):
-  """
-  Time a function using time.time() and the a @ function decorator
-  """
-  def wrapper(*arg,**keywords):
-    t1 = time.time()
-    res = func(*arg,**keywords)
-    t2 = time.time()
-    delta_s = (t2-t1)
-    print '%s took %0.3f ms (%0.3fs, %0.3fmin)' % (func.func_name, delta_s*1000.0, delta_s, delta_s/60 )
-    return res
-  return wrapper
-
 # Constants:
-version = '1.0'
+version = '1.3'
 # Wikipedia XML dump namespace:
 xmlNs = "http://www.mediawiki.org/xml/export-0.5/"
 xmlNsSeparator = '#'
@@ -50,9 +37,23 @@ tagMediawiki = xmlNs+xmlNsSeparator+'mediawiki'
 
 
 # Pre-copiled regular expressions:
-category_re = re.compile('Category:([^]]*)]', re.I )
+category_re = re.compile('\[\[Category:([^]]+)]', re.I )
 # Links to the child pages:
-child_re = re.compile( '\[\[(?!Category:)([^]]*)]]', re.I)
+child_re = re.compile( '\[\[(?!Category:)([^]]+)]]', re.I)
+
+def print_timing(func):
+  """
+  Time a function using time.time() and the a @ function decorator
+  """
+  def wrapper(*arg,**keywords):
+    t1 = time.time()
+    res = func(*arg,**keywords)
+    t2 = time.time()
+    delta_s = (t2-t1)
+    print '* Excution of "%s" took %0.3fms (%0.3fs, %0.3fmin)' \
+      % (func.func_name, delta_s*1000.0, delta_s, delta_s/60 )
+    return res
+  return wrapper
 
 def get_args():
   """
@@ -60,14 +61,21 @@ def get_args():
 
   Returns structure:
     args.category
+    args.include_categories
+    args.dry_run
+    args.phase
+    args.db
     args.input
+
 
   """
   parser = argparse.ArgumentParser(description='Wikipedia XML dump parser')
   parser.add_argument( '-c', '--category', help='Article category (default:"Living people")',
                        default='Living people')
-  parser.add_argument( '-i', '--include-categories', action='store_true',
+  parser.add_argument( '-i', '--include-categories', action='store_true', default=False,
                        help='Include categories (defaul: no)')
+  parser.add_argument( '-D', '--dry-run', action='store_true', default=False,
+                       help='Parse Wikipedia XML dump without sotring data into the DB (defaul: no)')
   parser.add_argument( '-p', '--phase',
                        help='Processing phase (default: both)',
                        default='both',
@@ -82,16 +90,22 @@ def get_args():
   return args
 
 class WPParser:
+  """
+  Wikipedia XML DB backup dump parser
+  """
 
   _db_name = None
   _chunk_size = 1
   _number_in_chunk = 0
+  # Indicator that tells parser to skip the current page
+  skip_current_page = False
 
   def __init__(
       self,
       living_person_category = 'Living people',
       phase = 1,
       include_categories = False,
+      dry_run = False,
       db_name = None ):
 
     if not(self._db_name) and not(db_name):
@@ -101,6 +115,7 @@ class WPParser:
 
     self._init()
 
+    self._dry_run = dry_run
     self._living_person_category = living_person_category
     self._include_categories = include_categories
     if phase==1 or phase=='first':
@@ -120,6 +135,7 @@ class WPParser:
     self._cur = self._cn = self._id = self._title = self._text = self._value = None
     self._page_count = 0
     self._data_start = False
+    ### self.progress_bar = ProgressBar('green')
 
 
   def _init_parser(self):
@@ -203,6 +219,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
       self._cur = self.db().cursor()
     return self._cur
 
+  def db_execute( self, *args, **keywords):
+    """
+    DB SQL statement execution wrapper function
+    if "--dry-run" option set, do nothing
+    """
+    if self._dry_run:
+      return None
+    if self._cur == None:
+      self.cur()
+    return self._cur.execute( *args, **keywords)
+
+  def db_executemany(self, *args, **keywords):
+    """
+    DB SQL statement execution wrapper function for executemany
+    if "--dry-run" option set, do nothing
+    """
+    if self._dry_run:
+      return None
+    if self._cur == None:
+      self.cur()
+    return self._cur.executemany( *args, **keywords)
+
+  def get_article_id( self, title):
+    """
+    Finds article_id based on article tile
+    """
+    cur = self.db_execute(
+      "SELECT id FROM article WHERE title=? AND parsed_at IS NOT NULL", ( title, ) )
+    if not(cur):
+      return None
+    else:
+      row = cur.fetchone()
+    if row:
+      return row[0]
+    else:
+      return None
+
   def reset(self):
     """
     Reset parser in order to parse subsequent documents
@@ -251,22 +304,33 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
   def end_tag_handler(self, tag):
     if tag == tagTitle:
       self._title = self._data.strip()
+      # We are skipping non-English page:
+      self.skip_current_page = self.is_non_en( self._title)
     elif tag == tagId and self._parent_tag == tagPage:
       self._id = int( self._data.strip() )
     elif tag == tagPage:
       if not(self._number_in_chunk):
-        sys.stderr.write('#')
-      self.parse_page()
+        self.refresh_progress_bar()
+      if not self.skip_current_page:
+        self.parse_page()
     elif tag == tagMediawiki:
+      self.refresh_progress_bar()
       # The end of XML dump file reached - do clean-up:
       self.db().commit()
       self.cur().close()
       print "\n%d articles processed." % self._page_count
-      print "Parsing complete! Please wait until DB compacting is finised..."
-      self.db().execute('VACUUM')
+      if not( self._dry_run):
+        # if "--dry-run" option set, don't vacuum DB:
+        print "Parsing complete! Please wait until DB compacting is finised..."
+        self.db().execute('VACUUM')
 
     self._tag = self._parent_tag
     self._parent_tag = None
+
+  def refresh_progress_bar( self):
+      progress_percentage = ( 100.0 * self._page_count ) / self._total_page_count
+      pbar_format_str = "\r%.3f%% "+"#"*int(progress_percentage+0.9999)
+      sys.stderr.write( pbar_format_str % progress_percentage)
 
   def data_tag_handler(self, data):
     # dealing with data fragmentation (bug in expat parser)
@@ -280,16 +344,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     Parse page and store page metat-data in the DB
     """
     # print "Parsing page %s\n" % self._title
-
     article_id = None
     if self._phase==2:
+      article_id = self.get_article_id( self._title)
       # ignore if the page wasn't found at the first phase/pass or already parsed:
-      row = self.cur().execute(
-        "SELECT id FROM article WHERE title=? AND parsed_at IS NOT NULL",
-        (self._title, ) ).fetchone()
-      if row:
-        article_id = row[0]
-      else:
+      if not(article_id):
         return
 
     self._text = self._data
@@ -301,7 +360,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
                     for item in sublist]
       if categories:
         is_living_person = ( self._living_person_category in categories )
-        self.cur().executemany(
+        self.db_executemany(
           "INSERT OR IGNORE INTO category (name) VALUES (?)",
           [ (c,) for c in  categories ] )
     elif self._category_re.search(self._text):
@@ -310,48 +369,51 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
       # At the first pass ignore pages not belonging to "Living peple" category
       return
     if not(article_id):
-      self.cur().execute(
+      self.db_execute(
         "INSERT OR IGNORE INTO article (title,page_id,is_living_person,parsed_at) VALUES (?,?,?,datetime('now'))",
         ( self._title, self._id, is_living_person, ) )
-      article_id = self._cur.lastrowid
+      if not self._dry_run:
+        article_id = self._cur.lastrowid
       if article_id == None:
-        self._cur.execute(
+        self.db_execute(
           "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE title=?",
           ( is_living_person, self._id, self._title, ) )
-        article_id = self._cur.lastrowid
+        if not self._dry_run:
+          article_id = self._cur.lastrowid
     else: # Phase #2
-        self._cur.execute(
-          "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE id=?",
-          ( is_living_person, self._id, article_id ) )
+      self.db_execute(
+        "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE id=?",
+        ( is_living_person, self._id, article_id ) )
     assert article_id != None
     if self._include_categories and categories:
-      self._cur.executemany(
+      self.db_executemany(
         """INSERT OR IGNORE INTO article_category (article_id,category_id)
         VALUES (?, (SELECT id FROM category WHERE name=?) )""",
         [ ( article_id, c,) for c in categories ] )
-    children = [item.strip() for sublist in
+    children = [ item for item in [item.strip() for sublist in
                   [ cat.split('|') for cat in child_re.findall( self._text)]
-                for item in sublist]
+                for item in sublist ] if self.is_en(item) ]
     if children:
       if self._phase==1:
         # At the second pass, process only links to the "Living people" pages
-        self._cur.executemany(
+        self.db_executemany(
           "INSERT OR IGNORE INTO article (title) VALUES (?)",
           [ (title,) for title in  children ] )
       # set up the article_id as the last detected page referencing the child:
-      self._cur.executemany(
+      self.db_executemany(
         "UPDATE article SET parent_id=? WHERE title=?",
         [ (article_id, title) for title in  children ] )
       # collect all links in the article in the "link" table:
-      self._cur.execute(
+      self.db_execute(
         """INSERT OR IGNORE INTO link
           (article_id, ref_article_id)
           SELECT parent_id, id
           FROM article
           WHERE parent_id=?""", (article_id,))
-    if not(self._number_in_chunk):
+    if not(self._number_in_chunk) and not(self._dry_run):
       self.db().commit()
 
+  @print_timing
   def get_volume( self, file_name ):
     """
     Counts lines and page/article entries in
@@ -365,18 +427,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     f = open( file_name, 'r')
     for line in f:
       line_count += 1
+      # count element <page> entries
       if line.find( '<page>') >= 0:
         page_count += 1
 
     f.close()
     return ( line_count, page_count,)
 
+  def is_en( self, title):
+    """
+    Test if page is an English page.
+    Page is considered to be English or of an unknow language, if:
+      1) it doesn't have language code;
+      or
+      2) if it does have one, it is not 'en'
+    """
+    return len(title) < 3 or title[2]!=':' or title[0:3]=='en:'
+
+  def is_non_en( self, title):
+    """
+    Test if page is NOT an English page.
+    """
+    return not self.is_en(title)
+
 
 def main():
+  """
+  Invokes parsing process interactively if the scrip run from terminal
+  """
   args = get_args()
   p = WPParser(
     living_person_category = args.category,
     include_categories = args.include_categories,
+    dry_run = args.dry_run,
     db_name = args.db )
   #if not( os.path.exists( source_file_name) ):
   #  print >> sys.stderr, "Downloading %s ... Please wait!" % source_url
@@ -392,4 +475,3 @@ def main():
 
 if __name__ == '__main__':
   main()
-
