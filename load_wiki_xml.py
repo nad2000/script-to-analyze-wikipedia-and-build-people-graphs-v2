@@ -19,21 +19,18 @@ import urllib, os, os.path
 import sqlite3
 import argparse
 import time
+import json
 
 # Constants:
-version = '1.3'
-# Wikipedia XML dump namespace:
-xmlNs = "http://www.mediawiki.org/xml/export-0.5/"
-xmlNsSeparator = '#'
+version = '1.4'
 
 # element/tag names:
-
-tagPage = xmlNs+xmlNsSeparator+'page'
-tagTitle = xmlNs+xmlNsSeparator+'title'
-tagId = xmlNs+xmlNsSeparator+'id'
-tagText = xmlNs+xmlNsSeparator+'text'
-tagRevision = xmlNs+xmlNsSeparator+'revision'
-tagMediawiki = xmlNs+xmlNsSeparator+'mediawiki'
+tagPage = 'page'
+tagTitle = 'title'
+tagId = 'id'
+tagText = 'text'
+tagRevision = 'revision'
+tagMediawiki = 'mediawiki'
 
 
 # Pre-copiled regular expressions:
@@ -99,6 +96,7 @@ class WPParser:
   _number_in_chunk = 0
   # Indicator that tells parser to skip the current page
   skip_current_page = False
+  start_time = None
 
   def __init__(
       self,
@@ -142,8 +140,10 @@ class WPParser:
     """
     Instantiates EXPAT parser
     """
-    self._parser = expat.ParserCreate(
-      namespace_separator = xmlNsSeparator )
+    self._parser = expat.ParserCreate()
+    self._parser.buffer_text = True
+    # Buffer 1Mb (default: 8Kb):
+    self._parser.buffer_size = 1048576
     self._parser.StartElementHandler = self.start_tag_handler
     self._parser.EndElementHandler = self.end_tag_handler
     self._parser.CharacterDataHandler = self.data_tag_handler
@@ -273,6 +273,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     Average size of an article: 8650
     """
     self.reset()
+    self.start_timer()
     self._phase = phase
     if phase==1 or self._chunk_size==1:
       ( self._total_line_count, self._total_page_count ) = self.get_volume( fileName )
@@ -327,17 +328,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
     self._tag = self._parent_tag
     self._parent_tag = None
 
-  def refresh_progress_bar( self):
-      progress_percentage = ( 100.0 * self._page_count ) / self._total_page_count
-      pbar_format_str = "\r%.3f%% "+"#"*int(progress_percentage+0.9999)
-      sys.stderr.write( pbar_format_str % progress_percentage)
-
   def data_tag_handler(self, data):
-    # dealing with data fragmentation (bug in expat parser)
-    if not(self._data_start):
-      self._data = ''
-      self._data_start = True
-    self._data += data
+    """
+    Elments values handler
+    """
+    self._data = data
+
+  def start_timer( self):
+    """
+    Starte or resete timer to track time of longrunning processes
+    """
+    self.start_time = time.time()
+
+  def time_passed( self):
+    """
+    Time passed in seconds since last time the time was started of reset
+    """
+    if self.start_time == None:
+      self.start_timer()
+    return (time.time()-self.start_time)
+
+  def time_delta_str( self, time_delta):
+    """
+    Time interval in seconds presentation in seconds, minutes, hours depending
+    on the magnitude of the value
+    """
+    unit = 's'
+    if time_delta > 100:
+      time_delta = time_delta / 60
+      unit = 'min'
+    if time_delta > 100:
+      time_delta = time_delta / 60
+      unit = 'h'
+    if time_delta > 100:
+      time_delta = time_delta / 24
+      unit = 'days'
+    return "%.3f%s" % (time_delta, unit)
+
+  def refresh_progress_bar( self):
+    unit = 's'
+    time_passed = self.time_passed()
+    if time_passed > 0 and self._page_count > 0:
+      eta = self.time_delta_str(( self._total_page_count / self._page_count - 1 ) * time_passed)
+    else:
+      eta = 'N/A'
+    time_passed_str = self.time_delta_str( time_passed)
+    progress_percentage = ( 100.0 * self._page_count ) / self._total_page_count
+    pbar_format_str = "\r%.1f%% in %s ETA: %s "+"#"*int(progress_percentage+0.999999)
+    sys.stderr.write( pbar_format_str % ( progress_percentage, time_passed_str, eta) )
 
   def parse_page( self):
     """
@@ -417,21 +455,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
   def get_volume( self, file_name ):
     """
     Counts lines and page/article entries in
-    the source file
+    the source file and store in the stat file for repeated runs
+    If the stat file exists, read it
     """
+    stats_file_name = os.path.splitext(file_name)[0]+'_stats.json'
+    if  os.path.exists(stats_file_name):
+      stat_file = open( stats_file_name, 'r')
+      stats = json.load( stat_file)
+      stat_file.close()
+      line_count = stats['line_count']
+      page_count = stats['page_count']
+    else:
+      line_count = 0
+      page_count = 0
+      line_substr_count = 0
 
-    line_count = 0
-    page_count = 0
-    line_substr_count = 0
+      f = open( file_name, 'r')
+      for line in f:
+        line_count += 1
+        pos = 0
+        while pos < len(line):
+          c = line[pos]
+          if c not in [' ', '\t']: ## c !=' ' and c!='\t':
+            # count element <page> entries only if not space characer is '<'
+            if c == '<' :
+              if '<page>' in line:
+                page_count += 1
+            break
+          pos += 1
 
-    f = open( file_name, 'r')
-    for line in f:
-      line_count += 1
-      # count element <page> entries
-      if line.find( '<page>') >= 0:
-        page_count += 1
-
-    f.close()
+      stats = { 'line_count': line_count, 'page_count': page_count }
+      stat_file = open( stats_file_name, 'w')
+      json.dump( stats, stat_file)
+      f.close()
     return ( line_count, page_count,)
 
   def is_en( self, title):
