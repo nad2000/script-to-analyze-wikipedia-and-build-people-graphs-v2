@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python -OO
+#!/usr/bin/env python -OO
 """
 Wikipedia for relationships between living people
 
@@ -443,9 +443,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
         is_living_person = False
         categories = None
         if self._include_categories:
-            categories = [item.strip() for sublist in
+            categories = set([item.strip() for sublist in
                                             [ cat.split('|') for cat in category_re.findall( self._text)]
-                                        for item in sublist]
+                                        for item in sublist])
             if categories:
                 is_living_person = ( self._living_person_category in categories )
                 self.db_executemany(
@@ -478,9 +478,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
                 """INSERT OR IGNORE INTO article_category (article_id,category_id)
                 VALUES (?, (SELECT id FROM category WHERE name=?) )""",
                 [ ( article_id, c,) for c in categories ] )
-        children = [ item for item in [item.strip() for sublist in
+        children = set([ item for item in [item.strip() for sublist in
                                     [ cat.split('|') for cat in child_re.findall( self._text)]
-                                for item in sublist ] if self.is_en(item) ]
+                                for item in sublist ] if self.is_en(item) ])
         if children:
             if self._phase==1:
                 # At the second pass, process only links to the "Living people" pages
