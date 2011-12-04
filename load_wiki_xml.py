@@ -168,7 +168,6 @@ class WPParser:
         # Last parsed page subelemt values
         self._cur = self._cn = self._id = self._title = self._text = self._value = None
         self._page_count = 0
-        self._data_start = False
 
     def _init_parser(self):
         """
@@ -335,7 +334,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
         """
         Element opening/start XML tag "<tag>" handler
         """
-        self._data_start = False
         if tag == tagPage:
             self._id = self._title = self._text = None
             self._page_count += 1
@@ -356,6 +354,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
         elif tag == tagPage:
             if not(self._number_in_chunk):
                 self.refresh_progress_bar()
+        elif tag == tagText:
             if not self.skip_current_page:
                 self.parse_page()
         elif tag == tagMediawiki:
@@ -490,7 +489,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
             # set up the article_id as the last detected page referencing the child:
             self.db_executemany(
                 "UPDATE article SET parent_id=? WHERE title=?",
-                [ (article_id, title) for title in    children ] )
+                [ (article_id, title) for title in children ] )
             # collect all links in the article in the "link" table:
             self.db_execute(
                 """INSERT OR IGNORE INTO link
