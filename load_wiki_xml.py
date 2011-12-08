@@ -1,4 +1,4 @@
-#!/usr/bin/env python -OO
+#!/usr/bin/python -OO
 """
 Wikipedia for relationships between living people
 
@@ -356,6 +356,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
         elif tag == tagPage:
             if not(self._number_in_chunk):
                 self.refresh_progress_bar()
+        elif tag == tagText:
             if not self.skip_current_page:
                 self.parse_page()
         elif tag == tagMediawiki:
