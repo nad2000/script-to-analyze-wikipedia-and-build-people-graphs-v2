@@ -279,7 +279,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
             tuple ( id, title, page_id, is_living_person, parsed_at )
         """
         cur = self.db_execute(
-            "SELECT * FROM article WHERE title=? AND parsed_at IS NOT NULL", ( title, ) )
+            "SELECT * FROM article WHERE title=?", ( title, ) )
 
         if not(cur):
             return None
@@ -295,7 +295,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
         Finds article_id based on article tile
         """
         cur = self.db_execute(
-            "SELECT id FROM article WHERE title=? AND parsed_at IS NOT NULL", ( title, ) )
+            "SELECT id FROM article WHERE title=?", ( title, ) )
         if not(cur):
             return None
         else:
