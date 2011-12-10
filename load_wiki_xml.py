@@ -202,35 +202,33 @@ PRAGMA locking_mode=EXCLUSIVE;
 
 -- DROP TABLE IF EXISTS category;
 CREATE TABLE IF NOT EXISTS category (
-    id         INTEGER PRIMARY KEY,
-    name     TEXT        NOT NULL UNIQUE
+    id    INTEGER PRIMARY KEY,
+    name  TEXT NOT NULL UNIQUE
 );
 
 -- DROP TABLE IF EXISTS article;
 CREATE TABLE IF NOT EXISTS article (
     -- Internal ID:
-    id                             INTEGER PRIMARY KEY,
-    title                        TEXT NOT NULL UNIQUE,
+    id               INTEGER PRIMARY KEY,
+    title            TEXT NOT NULL UNIQUE,
     -- Wikipedia DB ID:
-    page_id                    INTEGER NULL UNIQUE,
+    page_id          INTEGER NULL UNIQUE,
     -- Article is about a living person (deteced based on the category)
-    is_living_person BOOLEAN NOT NULL DEFAULT FALSE,
-    -- The most recently detected parent (parsed artilce with link to the page)
-    parent_id                INTEGER NULL,
-    parsed_at                DATETIME NULL
+    is_living_person BOOLEAN NULL,
+    parsed_at        DATETIME NULL
  );
 
 -- DROP TABLE IF EXISTS article_category;
 CREATE TABLE IF NOT EXISTS article_category (
-    id                    INTEGER PRIMARY KEY,
-    article_id    INTEGER NOT NULL,
+    id          INTEGER PRIMARY KEY,
+    article_id  INTEGER NOT NULL,
     category_id INTEGER NOT NULL );
 CREATE UNIQUE INDEX IF NOT EXISTS article_category_idx ON article_category(article_id, category_id);
 
 -- DROP TABLE IF EXISTS link;
 CREATE TABLE IF NOT EXISTS link (
-    id                         INTEGER PRIMARY KEY,
-    article_id         INTEGER NOT NULL,
+    id             INTEGER PRIMARY KEY,
+    article_id     INTEGER NOT NULL,
     ref_article_id INTEGER NOT NULL );
 CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
 """)
@@ -273,6 +271,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
         if self._cur == None:
             self.cur()
         return self._cur.executemany( *args, **keywords)
+
+    def get_article( self, title):
+        """
+        Finds article row based on article tile
+        Returns:
+            tuple ( id, title, page_id, is_living_person, parsed_at )
+        """
+        cur = self.db_execute(
+            "SELECT * FROM article WHERE title=? AND parsed_at IS NOT NULL", ( title, ) )
+
+        if not(cur):
+            return None
+        else:
+            row = cur.fetchone()
+        if row:
+            return row
+        else:
+            return (None,None,None,None,None )
 
     def get_article_id( self, title):
         """
@@ -432,51 +448,44 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
         """
         # print "Parsing page %s\n" % self._title
         article_id = None
+        is_living_person = None
+
         if self._phase==2:
-            article_id = self.get_article_id( self._title)
+            ( article_id, title, page_id, is_living_person, parsed_at ) = \
+                self.get_article( self._title)
             # ignore if the page wasn't found at the first phase/pass or already parsed:
-            if not(article_id):
+            if not(article_id) or is_living_person or parsed_at:
                 return
 
         self._text = self._data
-        is_living_person = False
-        categories = None
-        if self._include_categories:
-            categories = set([item.strip() for sublist in
-                                            [ cat.split('|') for cat in category_re.findall( self._text)]
-                                        for item in sublist])
-            if categories:
-                is_living_person = ( self._living_person_category in categories )
-                self.db_executemany(
-                    "INSERT OR IGNORE INTO category (name) VALUES (?)",
-                    [ (c,) for c in    categories ] )
-        elif self._category_re.search(self._text):
+
+        if self._category_re.search(self._text):
             is_living_person = True
+        else:
+            is_living_person = False
+
         if not(is_living_person) and self._phase==1:
             # At the first pass ignore pages not belonging to "Living peple" category
             return
+
         if not(article_id):
             self.db_execute(
                 "INSERT OR IGNORE INTO article (title,page_id,is_living_person,parsed_at) VALUES (?,?,?,datetime('now'))",
                 ( self._title, self._id, is_living_person, ) )
-            if not self._dry_run:
+            if not(self._dry_run):
                 article_id = self._cur.lastrowid
-            if article_id == None:
+            if not(article_id):
+                if not self._dry_run:
+                    article_id = self.get_article_id( self._title)
                 self.db_execute(
                     "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE title=?",
                     ( is_living_person, self._id, self._title, ) )
-                if not self._dry_run:
-                    article_id = self._cur.lastrowid
         else: # Phase #2
             self.db_execute(
                 "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE id=?",
                 ( is_living_person, self._id, article_id ) )
         assert article_id != None
-        if self._include_categories and categories:
-            self.db_executemany(
-                """INSERT OR IGNORE INTO article_category (article_id,category_id)
-                VALUES (?, (SELECT id FROM category WHERE name=?) )""",
-                [ ( article_id, c,) for c in categories ] )
+
         children = set([ item for item in [item.strip() for sublist in
                                     [ cat.split('|') for cat in child_re.findall( self._text)]
                                 for item in sublist ] if self.is_en(item) ])
@@ -485,18 +494,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
                 # At the second pass, process only links to the "Living people" pages
                 self.db_executemany(
                     "INSERT OR IGNORE INTO article (title) VALUES (?)",
-                    [ (title,) for title in    children ] )
-            # set up the article_id as the last detected page referencing the child:
-            self.db_executemany(
-                "UPDATE article SET parent_id=? WHERE title=?",
-                [ (article_id, title) for title in children ] )
-            # collect all links in the article in the "link" table:
+                    [ (title,) for title in children ] )
             self.db_execute(
                 """INSERT OR IGNORE INTO link
                     (article_id, ref_article_id)
-                    SELECT parent_id, id
+                    SELECT ?, id
                     FROM article
-                    WHERE parent_id=?""", (article_id,))
+                    WHERE title IN (""" +
+                    ",".join( [ "'"+title.replace("'","''")+"'" for title in children ] ) + ")", (article_id,))
         if not(self._number_in_chunk) and not(self._dry_run):
             self.db().commit()
 
