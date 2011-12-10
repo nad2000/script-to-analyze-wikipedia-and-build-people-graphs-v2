@@ -1,4 +1,4 @@
-#!/usr/bin/env python -OO
+#!/usr/bin/python -OO
 """
 Wikipedia for relationships between living people
 
