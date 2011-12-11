@@ -49,7 +49,7 @@ import time
 import json
 
 # Constants:
-version = '1.6'
+version = '1.7'
 
 # element/tag names:
 tagPage = 'page'
@@ -63,9 +63,9 @@ tagMediawiki = 'mediawiki'
 default_db_name = 'wppages.sqlite '
 
 # Pre-copiled regular expressions:
-category_re = re.compile('\[\[Category:([^]]+)]', re.I )
+category_re = re.compile('\[\[Category:([^]\|]+)', re.I )
 # Links to the child pages:
-child_re = re.compile( '\[\[(?!Category:)([^]]+)]]', re.I)
+child_re = re.compile( '\[\[(?!Category:)([^]\|]+)', re.I)
 
 def print_timing(func):
     """
@@ -151,8 +151,8 @@ class WPParser:
         else:
             self._phase = 2
 
-        # Selected category regex
-        self._category_re = re.compile( '\[\Category:[^]]*'+living_person_category, re.I)
+        # Subtring to look for to tell if page is about a living person:
+        self._category_str = '[Category:'+living_person_category
 
         self._total_page_count = 0
         self._total_page_count_float = .0
@@ -231,6 +231,68 @@ CREATE TABLE IF NOT EXISTS link (
     article_id     INTEGER NOT NULL,
     ref_article_id INTEGER NOT NULL );
 CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
+
+CREATE VIEW IF NOT EXISTS direct_relation
+AS
+SELECT
+    'http://en.wikipedia.org/wiki/'||REPLACE(s_title,' ','_') AS wikipedia_url_source,
+    'http://en.wikipedia.org/wiki/'||REPLACE(t_title,' ','_') AS wikipedia_url_target,
+    'http://en.wikipedia.org/wiki/'||REPLACE(s_title,' ','_') AS wikipedia_url_connection,
+    'DIRECT' AS  relationship_type
+FROM (
+SELECT s.title AS s_title, t.title AS t_title
+FROM article AS s JOIN link AS l ON l.article_id = s.id AND s.is_living_person
+    AND l.article_id <> l.ref_article_id
+  JOIN article AS t ON t.id = l.ref_article_id AND t.is_living_person
+  ORDER BY 1,2 );
+
+CREATE VIEW IF NOT EXISTS indirect_relation
+AS
+SELECT
+    'http://en.wikipedia.org/wiki/'||REPLACE(s_title,' ','_') AS wikipedia_url_source,
+    'http://en.wikipedia.org/wiki/'||REPLACE(t_title,' ','_') AS wikipedia_url_target,
+    'http://en.wikipedia.org/wiki/'||REPLACE(c_title,' ','_') AS wikipedia_url_connection,
+    'INDIRECT' AS  relationship_type
+FROM (
+SELECT s.title AS s_title, t.title AS t_title, c.title AS c_title
+FROM article AS s JOIN link AS l ON l.article_id = s.id
+    AND s.is_living_person AND l.article_id <> l.ref_article_id
+  JOIN link AS l2 ON l2.article_id = l.ref_article_id
+    AND l2.article_id <> l2.ref_article_id
+    AND l.article_id <> l2.ref_article_id
+  JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
+    AND t.id <> s.id
+  JOIN article AS c ON c.id = l.ref_article_id
+  ORDER BY 1,2 );
+
+-- DROP VIEW IF EXISTS relation;
+CREATE VIEW IF NOT EXISTS relation
+AS
+SELECT
+    'http://en.wikipedia.org/wiki/'||REPLACE(s_title,' ','_') AS wikipedia_url_source,
+    'http://en.wikipedia.org/wiki/'||REPLACE(t_title,' ','_') AS wikipedia_url_target,
+    'http://en.wikipedia.org/wiki/'||REPLACE(c_title,' ','_') AS wikipedia_url_connection,
+    CASE is_direct WHEN 1 THEN 'DIRECT' WHEN 0 THEN 'INDIRECT' END AS relationship_type
+FROM (
+SELECT
+    s.title AS s_title,
+    t.title AS t_title,
+    t.title AS c_title,
+    1 AS is_direct
+FROM article AS s JOIN link AS l ON l.article_id = s.id
+    AND s.is_living_person AND l.article_id <> l.ref_article_id
+  JOIN article AS t ON t.id = l.ref_article_id AND t.is_living_person
+UNION ALL
+SELECT s.title, t.title, c.title, 0
+FROM article AS s JOIN link AS l ON l.article_id = s.id
+    AND s.is_living_person AND l.article_id <> l.ref_article_id
+  JOIN link AS l2 ON l2.article_id = l.ref_article_id
+    AND l2.article_id <> l2.ref_article_id
+    AND l.article_id <> l2.ref_article_id
+  JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
+    AND t.id <> s.id
+  JOIN article AS c ON c.id = l.ref_article_id
+ORDER BY 1,2 );
 """)
         self._cn.commit()
 
@@ -454,19 +516,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
             ( article_id, title, page_id, is_living_person, parsed_at ) = \
                 self.get_article( self._title)
             # ignore if the page wasn't found at the first phase/pass or already parsed:
-            if not(article_id) or is_living_person or parsed_at:
+            if not(article_id) or parsed_at:
                 return
 
         self._text = self._data
 
-        if self._category_re.search(self._text):
-            is_living_person = True
+        if self._phase==1:
+            is_living_person = ( self._category_str in self._text )
+            if not(is_living_person):
+                # At the first pass ignore pages not belonging to "Living peple" category
+                return
         else:
+            # on the secon pass we dealing only with pages not about living peaple
+            # as all pages about living people had been processed on the first pass
             is_living_person = False
-
-        if not(is_living_person) and self._phase==1:
-            # At the first pass ignore pages not belonging to "Living peple" category
-            return
 
         if not(article_id):
             self.db_execute(
@@ -482,26 +545,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
                     ( is_living_person, self._id, self._title, ) )
         else: # Phase #2
             self.db_execute(
-                "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE id=?",
-                ( is_living_person, self._id, article_id ) )
+                "UPDATE article SET is_living_person=0, page_id=?, parsed_at=datetime('now') WHERE id=?",
+                ( self._id, article_id ) )
         assert article_id != None
 
-        children = set([ item for item in [item.strip() for sublist in
-                                    [ cat.split('|') for cat in child_re.findall( self._text)]
-                                for item in sublist ] if self.is_en(item) ])
+        children = set([title for title in
+                    [child.strip() for child in child_re.findall( self._text)]
+                    if self.is_en(title)])
+
         if children:
             if self._phase==1:
                 # At the second pass, process only links to the "Living people" pages
                 self.db_executemany(
                     "INSERT OR IGNORE INTO article (title) VALUES (?)",
                     [ (title,) for title in children ] )
-            self.db_execute(
-                """INSERT OR IGNORE INTO link
+            sql = """INSERT OR IGNORE INTO link
                     (article_id, ref_article_id)
                     SELECT ?, id
                     FROM article
-                    WHERE title IN (""" +
-                    ",".join( [ "'"+title.replace("'","''")+"'" for title in children ] ) + ")", (article_id,))
+                    WHERE title IN (""" + \
+                    ",".join( [ "'"+title.replace("'","''")+"'" for title in children ] ) + ")"
+            if self._phase==2: # don't link to pages not about living people
+                sql += " AND is_living_person"
+            self.db_execute( sql, (article_id,))
         if not(self._number_in_chunk) and not(self._dry_run):
             self.db().commit()
 
@@ -553,7 +619,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
             or
             2) if it does have one, it is not 'en'
         """
-        return len(title) < 3 or title[2]!=':' or title[0:3]=='en:'
+        return not (':' in title) or title.startswith(':en:')
 
     def is_non_en( self, title):
         """
