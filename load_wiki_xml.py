@@ -511,8 +511,9 @@ ORDER BY 1,2 );
         # print "Parsing page %s\n" % self._title
         article_id = None
         is_living_person = None
+        phase = self._phase
 
-        if self._phase==2:
+        if phase==2:
             ( article_id, title, page_id, is_living_person, parsed_at ) = \
                 self.get_article( self._title)
             # ignore if the page wasn't found at the first phase/pass or already parsed:
@@ -521,28 +522,27 @@ ORDER BY 1,2 );
 
         self._text = self._data
 
-        if self._phase==1:
+        if phase==1:
             is_living_person = ( self._category_str in self._text )
             if not(is_living_person):
-                # At the first pass ignore pages not belonging to "Living peple" category
+                # At the first pass ignore pages not belonging to "Living people" category
                 return
         else:
             # on the secon pass we dealing only with pages not about living peaple
             # as all pages about living people had been processed on the first pass
             is_living_person = False
 
-        if not(article_id):
+        if phase==1:
             self.db_execute(
                 "INSERT OR IGNORE INTO article (title,page_id,is_living_person,parsed_at) VALUES (?,?,?,datetime('now'))",
                 ( self._title, self._id, is_living_person, ) )
             if not(self._dry_run):
                 article_id = self._cur.lastrowid
-            if not(article_id):
-                if not self._dry_run:
-                    article_id = self.get_article_id( self._title)
+            if not(article_id) and not(self._dry_run):
+                article_id = self.get_article_id( self._title)
                 self.db_execute(
-                    "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE title=?",
-                    ( is_living_person, self._id, self._title, ) )
+                    "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE id=?",
+                    ( is_living_person, self._id, article_id, ) )
         else: # Phase #2
             self.db_execute(
                 "UPDATE article SET is_living_person=0, page_id=?, parsed_at=datetime('now') WHERE id=?",
