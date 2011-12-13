@@ -547,7 +547,7 @@ ORDER BY 1,2 );
                 'David Beckham']:
             with codecs.open( "filtered_stats.txt", 'a', encoding='utf-8') as o:
                 o.write( u"\n== %s ==\n live: %s, phase: %s, line: %d" % (self._title, is_living_person, phase, self._parser.CurrentLineNumber,) )
-            
+
 
         if phase==1:
             article_id = None
@@ -555,12 +555,14 @@ ORDER BY 1,2 );
                 "INSERT OR IGNORE INTO article (title,page_id,is_living_person,parsed_at) VALUES (?,?,?,datetime('now'))",
                 ( self._title, self._id, is_living_person, ) )
             if not(self._dry_run):
-                article_id = self._cur.lastrowid
-            if not(article_id) and not(self._dry_run):
-                article_id = self.get_article_id( self._title)
-                self.db_execute(
-                    "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE id=?",
-                    ( is_living_person, self._id, article_id, ) )
+                # row is not inserted
+                if not(self._cur.rowcount):
+                    article_id = self.get_article_id( self._title)
+                    self.db_execute(
+                        "UPDATE article SET is_living_person=?, page_id=?, parsed_at=datetime('now') WHERE id=?",
+                        ( is_living_person, self._id, article_id, ) )
+                else:
+                    article_id = self._cur.lastrowid
         else: # Phase #2
             self.db_execute(
                 "UPDATE article SET is_living_person=0, page_id=?, parsed_at=datetime('now') WHERE id=?",
