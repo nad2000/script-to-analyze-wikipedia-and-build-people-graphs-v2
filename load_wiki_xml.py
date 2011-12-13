@@ -47,6 +47,7 @@ import sqlite3
 import argparse
 import time
 import json
+import codecs
 
 # Constants:
 version = '1.7'
@@ -532,7 +533,24 @@ ORDER BY 1,2 );
             # as all pages about living people had been processed on the first pass
             is_living_person = False
 
+
+        if self._title in [
+                'Boris Becker',
+                'Billy Burke (actor)',
+                'Karl Lagerfeld',
+                'Richard Branson',
+                'Kevin Durant',
+                'Lady Gaga',
+                'Kelly Slater',
+                'Muhammad Yunus',
+                'Corey Flynn',
+                'David Beckham']:
+            with codecs.open( "filtered_stats.txt", 'a', encoding='utf-8') as o:
+                o.write( u"\n== %s ==\n live: %s, phase: %s, line: %d" % (self._title, is_living_person, phase, self._parser.CurrentLineNumber,) )
+            
+
         if phase==1:
+            article_id = None
             self.db_execute(
                 "INSERT OR IGNORE INTO article (title,page_id,is_living_person,parsed_at) VALUES (?,?,?,datetime('now'))",
                 ( self._title, self._id, is_living_person, ) )
