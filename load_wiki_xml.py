@@ -247,6 +247,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id AND s.is_living_person
   JOIN article AS t ON t.id = l.ref_article_id AND t.is_living_person
   ORDER BY 1,2 );
 
+-- DROP VIEW indirect_relation;
 CREATE VIEW IF NOT EXISTS indirect_relation
 AS
 SELECT
@@ -264,7 +265,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
   JOIN article AS c ON c.id = l.ref_article_id
-  ORDER BY 1,2 );
+  /* ORDER BY 1,2 */ );
 
 -- DROP VIEW IF EXISTS relation;
 CREATE VIEW IF NOT EXISTS relation
@@ -547,7 +548,6 @@ ORDER BY 1,2 );
                 'David Beckham']:
             with codecs.open( "filtered_stats.txt", 'a', encoding='utf-8') as o:
                 o.write( u"\n== %s ==\n live: %s, phase: %s, line: %d" % (self._title, is_living_person, phase, self._parser.CurrentLineNumber,) )
-
 
         if phase==1:
             article_id = None
