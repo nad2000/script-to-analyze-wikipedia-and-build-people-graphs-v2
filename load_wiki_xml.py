@@ -64,9 +64,11 @@ tagMediawiki = 'mediawiki'
 default_db_name = 'wppages.sqlite '
 
 # Pre-copiled regular expressions:
-category_re = re.compile('\[\[Category:([^]\|]+)', re.I )
+category_re = re.compile( '\[\[Category:([^]\|]+)', re.I )
 # Links to the child pages:
 child_re = re.compile( '\[\[(?!Category:)([^]\|]+)', re.I)
+# Death date:
+death_date_re = re.compile( '(?:\| ?DATE OF DEATH|\| ?death_date)[^=]*=(.*)', re.I )
 
 def print_timing(func):
     """
@@ -96,18 +98,20 @@ def get_args():
     """
     parser = argparse.ArgumentParser(description='Wikipedia XML dump parser')
     parser.add_argument( '-c', '--category', help='Article category (default:"Living people")',
-                                             default='Living people')
+                         default='Living people')
     parser.add_argument( '-i', '--include-categories', action='store_true', default=False,
-                                             help='Include categories (defaul: no)')
+                         help='Include categories (defaul: no)')
     parser.add_argument( '-D', '--dry-run', action='store_true', default=False,
-                                             help='Parse Wikipedia XML dump without sotring data into the DB (defaul: no)')
+                         help='Parse Wikipedia XML dump without sotring data into the DB (defaul: no)')
     parser.add_argument( '-p', '--phase',
-                                             help='Processing phase (default: both)',
-                                             default='both',
-                                             choices=['1','first','2','second','3','both'] )
+                         help='Processing phase (default: both)',
+                         default='both',
+                         choices=['1','first','2','second','3','both'] )
     parser.add_argument( '-d', '--db',
-                                             help='sqlite database file name (default: wppages.sqlite)',
-                                             default=default_db_name )
+                         help='sqlite database file name (default: wppages.sqlite)',
+                         default=default_db_name )
+    parser.add_argument( '-t', '--test-category', action='store_true', default=False,
+                         help='Test if there are pages about living people not belonging to the "Living people" category (defaul: no)')
     parser.add_argument( '--version', action='version', version='%(prog)s '+version)
     parser.add_argument( 'input', help='Wikipedia XML dump file')
 
@@ -132,6 +136,7 @@ class WPParser:
             phase = 1,
             include_categories = False,
             dry_run = False,
+            test_category = None,
             db_name = None ):
         """
         Constructor
@@ -141,6 +146,8 @@ class WPParser:
             self._db_name = default_db_name
         elif not(self._db_name):
             self._db_name = db_name
+
+        self.test_category = False if (test_category == None) else test_category
 
         self._init()
 
@@ -169,6 +176,8 @@ class WPParser:
         # Last parsed page subelemt values
         self._cur = self._cn = self._id = self._title = self._text = self._value = None
         self._page_count = 0
+        if self.test_category:
+            self.death_date_log = codecs.open( 'deathdates.txt', 'a', encoding='utf-8')
 
     def _init_parser(self):
         """
@@ -294,7 +303,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
   JOIN article AS c ON c.id = l.ref_article_id
-ORDER BY 1,2 );
+/*ORDER BY 1,2*/ );
 """)
         self._cn.commit()
 
@@ -406,6 +415,8 @@ ORDER BY 1,2 );
         Close all resourece used for parsing
         """
         # self._parser.Parse("", 1) # end of data
+        if self.test_category:
+            self.death_date_log.close()
         self.db().close()
         del self._cn
         del self._parser # get rid of circular references
@@ -514,6 +525,25 @@ ORDER BY 1,2 );
         article_id = None
         is_living_person = None
         phase = self._phase
+
+        if self.test_category:
+            death_dates = [ dd.strip() for dd in death_date_re.findall( self._data)]
+            if not( self._category_str in self._data ):
+                if not(death_dates):
+                    return
+                for death_date in death_dates:
+                    if death_date != u'':
+                        return
+                self.death_date_log.write(
+                    "%s - missign death date and doesn't belong to the category\n" % self._title )
+            else:
+                for death_date in death_dates :
+                    if death_date != u'':
+                        # record pages with
+                        self.death_date_log.write(
+                            "%s - belongs to the category, but the death date '%s'\n" % (self._title, death_date,) )
+                        return
+            return
 
         if phase==2:
             ( article_id, title, page_id, is_living_person, parsed_at ) = \
@@ -657,7 +687,12 @@ def main():
         living_person_category = args.category,
         include_categories = args.include_categories,
         dry_run = args.dry_run,
-        db_name = args.db )
+        db_name = args.db,
+        test_category = args.test_category )
+    if args.test_category:
+        p.feed_file( args.input)
+        p.close()
+        return
     if args.phase in ['first','both','1','3']:
         p.feed_file( args.input, phase=1 )
     if args.phase in ['second','both','2','3']:
