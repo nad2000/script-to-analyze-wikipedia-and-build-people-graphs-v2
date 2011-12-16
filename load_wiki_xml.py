@@ -69,6 +69,8 @@ category_re = re.compile( '\[\[Category:([^]\|]+)', re.I )
 child_re = re.compile( '\[\[(?!Category:)([^]\|]+)', re.I)
 # Death date:
 death_date_re = re.compile( '(?:\| ?DATE OF DEATH|\| ?death_date)[^=]*=(.*)', re.I )
+# External links:
+external_link_re = re.compile( '\[?(http[s]?:[^<|\s\]]+)')
 
 def print_timing(func):
     """
@@ -241,6 +243,14 @@ CREATE TABLE IF NOT EXISTS link (
     article_id     INTEGER NOT NULL,
     ref_article_id INTEGER NOT NULL );
 CREATE UNIQUE INDEX IF NOT EXISTS link_idx ON link(article_id, ref_article_id);
+
+
+-- DROP TABLE IF EXISTS external_link;
+CREATE TABLE IF NOT EXISTS external_link (
+    id             INTEGER PRIMARY KEY,
+    article_id     INTEGER NOT NULL,
+    href           TEXT NOT NULL );
+CREATE INDEX IF NOT EXISTS external_link_idx ON link(article_id);
 
 CREATE VIEW IF NOT EXISTS direct_relation
 AS
@@ -565,19 +575,19 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             is_living_person = False
 
 
-        if self._title in [
-                'Boris Becker',
-                'Billy Burke (actor)',
-                'Karl Lagerfeld',
-                'Richard Branson',
-                'Kevin Durant',
-                'Lady Gaga',
-                'Kelly Slater',
-                'Muhammad Yunus',
-                'Corey Flynn',
-                'David Beckham']:
-            with codecs.open( "filtered_stats.txt", 'a', encoding='utf-8') as o:
-                o.write( u"\n== %s ==\n live: %s, phase: %s, line: %d" % (self._title, is_living_person, phase, self._parser.CurrentLineNumber,) )
+##        if self._title in [
+##                'Boris Becker',
+##                'Billy Burke (actor)',
+##                'Karl Lagerfeld',
+##                'Richard Branson',
+##                'Kevin Durant',
+##                'Lady Gaga',
+##                'Kelly Slater',
+##                'Muhammad Yunus',
+##                'Corey Flynn',
+##                'David Beckham']:
+##            with codecs.open( "filtered_stats.txt", 'a', encoding='utf-8') as o:
+##                o.write( u"\n== %s ==\n live: %s, phase: %s, line: %d" % (self._title, is_living_person, phase, self._parser.CurrentLineNumber,) )
 
         if phase==1:
             article_id = None
@@ -618,6 +628,12 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             if self._phase==2: # don't link to pages not about living people
                 sql += " AND is_living_person"
             self.db_execute( sql, (article_id,))
+
+        external_links = external_link_re.findall( self._text, self._text.rfind("=External links==") )
+        if external_links:
+            self.db_executemany(
+                "INSERT OR IGNORE INTO external_link (article_id, href) VALUES ("+str(article_id)+",?)",
+                [(href,) for href in external_links] )
         if not(self._number_in_chunk) and not(self._dry_run):
             self.db().commit()
 
