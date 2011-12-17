@@ -417,6 +417,11 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
         if phase==2:
             print "Second phase/pass started"
         self._file = open( file_name, mode='rb')
+        if self.test_category:
+            self._might_be_alive = codecs.open( os.path.splitext(file_name)[0]+'_might_be_alive.txt',
+                                            mode='w', encoding='utf-8')
+            self._might_be_dead = codecs.open( os.path.splitext(file_name)[0]+'_might_be_dead.txt',
+                                           mode='w', encoding='utf-8')
         self._parser.ParseFile( self._file)
         self._file.close()
 
@@ -426,7 +431,11 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
         """
         # self._parser.Parse("", 1) # end of data
         if self.test_category:
-            self.death_date_log.close()
+            try:
+                self._might_be_alive.close()
+                self._might_be_dead.close()
+            except:
+                pass
         self.db().close()
         del self._cn
         del self._parser # get rid of circular references
@@ -544,14 +553,13 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                 for death_date in death_dates:
                     if death_date != u'':
                         return
-                self.death_date_log.write(
-                    "%s - missign death date and doesn't belong to the category\n" % self._title )
+                self._might_be_alive.write( self._title+'\n' )
             else:
                 for death_date in death_dates :
                     if death_date != u'':
                         # record pages with
-                        self.death_date_log.write(
-                            "%s - belongs to the category, but the death date '%s'\n" % (self._title, death_date,) )
+                        self._might_be_dead.write(
+                            "%s, %s\n" % (self._title, death_date,) )
                         return
             return
 
@@ -629,11 +637,12 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                 sql += " AND is_living_person"
             self.db_execute( sql, (article_id,))
 
-        external_links = external_link_re.findall( self._text, self._text.rfind("=External links==") )
-        if external_links:
-            self.db_executemany(
-                "INSERT OR IGNORE INTO external_link (article_id, href) VALUES ("+str(article_id)+",?)",
-                [(href,) for href in external_links] )
+        if phase==1:
+            external_links = external_link_re.findall( self._text, self._text.rfind("=External links==") )
+            if external_links:
+                self.db_executemany(
+                    "INSERT OR IGNORE INTO external_link (article_id, href) VALUES ("+str(article_id)+",?)",
+                    [(href,) for href in external_links] )
         if not(self._number_in_chunk) and not(self._dry_run):
             self.db().commit()
 

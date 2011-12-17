@@ -19,6 +19,33 @@ Count=1
 [Project\ChildNodes\Node1]
 ClassName=TProjectRunConfiguationsNode
 
+[Project\ChildNodes\Node1\ChildNodes\Node0]
+ClassName=TProjectRunConfiguationNode
+Name=import_csv
+
+[Project\ChildNodes\Node1\ChildNodes\Node0\RunConfig]
+ScriptName=E:\projects\import_csv.py
+Description=import_csv
+EngineType=peRemote
+ReinitializeBeforeRun=TRUE
+Parameters=-H 6 e:\Downloads\Export20111215220449.csv
+WorkingDir=$[ActiveScript-Dir]
+WriteOutputToFile=FALSE
+OutputFileName=$[ActiveScript-NoExt].log
+AppendToFile=FALSE
+
+[Project\ChildNodes\Node1\ChildNodes\Node0\RunConfig\ExternalRun]
+Caption=External Run
+Description=Run script using an external Python Interpreter
+ApplicationName=$[PythonExe-Short]
+Parameters=$[ActiveScript-Short]
+WorkingDirectory=$[ActiveScript-Dir]
+ShortCut=0
+MessagesFormat=$[FileName] $[LineNumber]
+
+[Project\ChildNodes\Node1\ChildNodes]
+Count=1
+
 [Project\ChildNodes]
 Count=2
 
