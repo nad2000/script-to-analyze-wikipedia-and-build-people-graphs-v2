@@ -563,14 +563,14 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                             or death_date == '-'
                             or death_date == 'Not Dead'
                             or 'Alive' in death_date
-                            or death_date.startwith('never')
-                            or death_date.startwith('Never')
-                            or death_date.startwith('still')
-                            or death_date.startwith('not ')
-                            or death_date.startwith('Not ')
-                            or death_date.startwith('n/a')
-                            or death_date.startwith('N/A')
-                            or death_date.startwith('N / A')
+                            or death_date.startswith('never')
+                            or death_date.startswith('Never')
+                            or death_date.startswith('still')
+                            or death_date.startswith('not ')
+                            or death_date.startswith('Not ')
+                            or death_date.startswith('n/a')
+                            or death_date.startswith('N/A')
+                            or death_date.startswith('N / A')
                             or death_date in ['NA', 'Nil', 'None', 'Non', 'No'] ):
                         # record pages with
                         self._might_be_dead.write(
