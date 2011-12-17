@@ -68,7 +68,7 @@ category_re = re.compile( '\[\[Category:([^]\|]+)', re.I )
 # Links to the child pages:
 child_re = re.compile( '\[\[(?!Category:)([^]\|]+)', re.I)
 # Death date:
-death_date_re = re.compile( '(?:\| ?DATE OF DEATH|\| ?death_date)[^=]*=(.*)', re.I )
+death_date_re = re.compile( '(?:\| ?DATE OF DEATH|\| ?death_date)[^=]*=\s*((?!<!--)[^\s[|][^|[]*)', re.I )
 # External links:
 external_link_re = re.compile( '\[?(http[s]?:[^<|\s\]]+)')
 
@@ -551,12 +551,27 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                 if not(death_dates):
                     return
                 for death_date in death_dates:
-                    if death_date != u'':
+                    if death_date != u'' :
                         return
                 self._might_be_alive.write( self._title+'\n' )
             else:
                 for death_date in death_dates :
-                    if death_date != u'':
+                    if not( death_date == u''
+                            or '<!--' in death_date
+                            or death_date == 'living'
+                            or death_date == 'Living'
+                            or death_date == '-'
+                            or death_date == 'Not Dead'
+                            or 'Alive' in death_date
+                            or death_date.startwith('never')
+                            or death_date.startwith('Never')
+                            or death_date.startwith('still')
+                            or death_date.startwith('not ')
+                            or death_date.startwith('Not ')
+                            or death_date.startwith('n/a')
+                            or death_date.startwith('N/A')
+                            or death_date.startwith('N / A')
+                            or death_date in ['NA', 'Nil', 'None', 'Non', 'No'] ):
                         # record pages with
                         self._might_be_dead.write(
                             "%s, %s\n" % (self._title, death_date,) )
