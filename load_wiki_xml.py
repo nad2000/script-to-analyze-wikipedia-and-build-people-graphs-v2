@@ -64,9 +64,9 @@ tagMediawiki = 'mediawiki'
 default_db_name = 'wppages.sqlite '
 
 # Pre-copiled regular expressions:
-category_re = re.compile( '\[\[Category:([^]\|]+)', re.I )
+category_re = re.compile( '\[\[Category:(\S[^]\|]+)', re.I )
 # Links to the child pages:
-child_re = re.compile( '\[\[(?!Category:)([^]\|]+)', re.I)
+child_re = re.compile( '\[\[(?!Category:)(\S[^]\|]+)', re.I)
 # Death date:
 death_date_re = re.compile( '(?:\| ?DATE OF DEATH|\| ?death_date)[^=]*=\s*((?!<!--)[^\s[|][^|[]*)', re.I )
 # External links:
@@ -108,7 +108,7 @@ def get_args():
     parser.add_argument( '-p', '--phase',
                          help='Processing phase (default: both)',
                          default='both',
-                         choices=['1','first','2','second','3','both'] )
+                         choices=['0','zero','1','first','2','second','3','both'] )
     parser.add_argument( '-d', '--db',
                          help='sqlite database file name (default: wppages.sqlite)',
                          default=default_db_name )
@@ -250,7 +250,14 @@ CREATE TABLE IF NOT EXISTS external_link (
     id             INTEGER PRIMARY KEY,
     article_id     INTEGER NOT NULL,
     href           TEXT NOT NULL );
-CREATE INDEX IF NOT EXISTS external_link_idx ON link(article_id);
+CREATE INDEX IF NOT EXISTS external_link_idx ON external_link(article_id);
+
+-- DROP TABLE IF EXISTS redirect;
+CREATE TABLE IF NOT EXISTS redirect (
+    id       INTEGER PRIMARY KEY,
+    title    TEXT NOT NULL UNIQUE,
+    -- Redirect to page:
+    to_title TEXT NOT NULL );
 
 CREATE VIEW IF NOT EXISTS direct_relation
 AS
@@ -399,29 +406,33 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
         self._parser.Parse(data, 0)
 
     @print_timing
-    def feed_file(self, file_name, phase=1):
+    def feed_file(self, file_name, phase = None):
         """
         Parse Wikipedia XML dump file "feeding"
         EXPAT XML parser
         """
+        if phase==None:
+            phase=1
         self.reset()
         self.start_timer()
         self._phase = phase
-        if phase==1 or self._chunk_size==1:
+        if phase==0 or self._chunk_size==1:
             ( self._total_line_count, self._total_page_count ) = self.get_volume( file_name )
             self._total_page_count_float = float(self._total_page_count)
             print "Total %d lines and %d articles found in the file %s (size: %s KB)" % \
                 ( self._total_line_count, self._total_page_count, file_name, os.path.getsize( file_name )/1024)
             self._chunk_size = max( self._total_page_count / 80, 1)
             print "One tick (#): %d articles processed" % self._chunk_size
+        if phase==1:
+            print "First phase/pass started"
         if phase==2:
             print "Second phase/pass started"
         self._file = open( file_name, mode='rb')
         if self.test_category:
             self._might_be_alive = codecs.open( os.path.splitext(file_name)[0]+'_might_be_alive.txt',
-                                            mode='w', encoding='utf-8')
+                                                mode='w', encoding='utf-8')
             self._might_be_dead = codecs.open( os.path.splitext(file_name)[0]+'_might_be_dead.txt',
-                                           mode='w', encoding='utf-8')
+                                               mode='w', encoding='utf-8')
         self._parser.ParseFile( self._file)
         self._file.close()
 
@@ -544,6 +555,16 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
         article_id = None
         is_living_person = None
         phase = self._phase
+
+        # collect "redirects":
+        if phase==0:
+            if self._data.startswith(u'#REDIRECT'):
+                link_grps = child_re.search( self._data )
+                if link_grps:
+                    self.db_execute(
+                      "INSERT OR IGNORE INTO redirect (title,to_title) VALUES (?,?)",
+                      ( self._title, link_grps.group(1).strip() ,)  )
+            return
 
         if self.test_category:
             death_dates = [ dd.strip() for dd in death_date_re.findall( self._data)]
@@ -733,6 +754,8 @@ def main():
         p.feed_file( args.input)
         p.close()
         return
+    if args.phase in ['zero','both','0','3']:
+        p.feed_file( args.input, phase=0 )
     if args.phase in ['first','both','1','3']:
         p.feed_file( args.input, phase=1 )
     if args.phase in ['second','both','2','3']:
