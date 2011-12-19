@@ -666,7 +666,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             sql = """INSERT OR IGNORE INTO link
                     (article_id, ref_article_id)
                     SELECT ?, id
-                    FROM article
+                    FROM article JOIN
                     WHERE title IN (""" + \
                     ",".join( [ "'"+title.replace("'","''")+"'" for title in children ] ) + ")"
             if self._phase==2: # don't link to pages not about living people
