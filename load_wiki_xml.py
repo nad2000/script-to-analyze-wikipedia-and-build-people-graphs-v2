@@ -254,9 +254,11 @@ CREATE INDEX IF NOT EXISTS external_link_idx ON external_link(article_id);
 
 -- DROP TABLE IF EXISTS redirect;
 CREATE TABLE IF NOT EXISTS redirect (
-    id       INTEGER PRIMARY KEY,
-    title    TEXT NOT NULL UNIQUE,
+    id            INTEGER PRIMARY KEY,
+    article_id    INTEGER NOT NULL,
+    title         TEXT NOT NULL UNIQUE,
     -- Redirect to page:
+    to_article_id INTEGER NOT NULL,
     to_title TEXT NOT NULL );
 
 CREATE VIEW IF NOT EXISTS direct_relation
@@ -488,6 +490,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                 # if "--dry-run" option set, don't vacuum DB:
                 print "Parsing complete! Please wait until DB compacting is finised..."
                 self.db().execute('VACUUM')
+                self.db().execute('ANALYZE')
 
         self._tag = self._parent_tag
         self._parent_tag = None
@@ -561,9 +564,16 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             if self._data.startswith(u'#REDIRECT'):
                 link_grps = child_re.search( self._data )
                 if link_grps:
+                    to_title = link_grps.group(1).strip()
+                    self.db_executemany(
+                        "INSERT OR IGNORE INTO article (title) VALUES(?)",
+                        [ (title,) for title in [self._title, to_title ] ] )
                     self.db_execute(
-                      "INSERT OR IGNORE INTO redirect (title,to_title) VALUES (?,?)",
-                      ( self._title, link_grps.group(1).strip() ,)  )
+                      """INSERT OR IGNORE INTO redirect (article_id, title, to_article_id, to_title)
+                         SELECT fa.id, fa.title, ta.id, ta.title FROM article AS fa JOIN article AS ta
+                         ON fa.title=? AND ta.title=?""",
+                      ( self._title, to_title,)  )
+
             return
 
         if self.test_category:
@@ -661,12 +671,13 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             if self._phase==1:
                 # At the second pass, process only links to the "Living people" pages
                 self.db_executemany(
-                    "INSERT OR IGNORE INTO article (title) VALUES (?)",
+                    "INSERT OR IGNORE INTO article (title) VALUES(?)",
                     [ (title,) for title in children ] )
             sql = """INSERT OR IGNORE INTO link
                     (article_id, ref_article_id)
                     SELECT ?, id
-                    FROM article JOIN
+                    FROM article AS a LEFT JOIN redirect AS r ON r.title=a.title
+                      LEFT JOIN article AS ra ON ra.title=r.to_title
                     WHERE title IN (""" + \
                     ",".join( [ "'"+title.replace("'","''")+"'" for title in children ] ) + ")"
             if self._phase==2: # don't link to pages not about living people
