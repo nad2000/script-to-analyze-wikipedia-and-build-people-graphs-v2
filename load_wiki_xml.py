@@ -482,6 +482,12 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                 self.parse_page()
         elif tag == tagMediawiki:
             self.refresh_progress_bar()
+            # After 2nd pass "re-link" redirected pages to the new targets:
+            if self._phase==2:
+                self.db_execute(
+                    "UPDATE link "
+                    "SET ref_article_id = (SELECT to_article_id FROM redirect WHERE redirect.article_id=link.ref_article_id) "
+                    "WHERE ref_article_id IN (SELECT article_id FROM redirect)")
             # The end of XML dump file reached - do clean-up:
             self.db().commit()
             self.cur().close()
@@ -676,8 +682,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             sql = """INSERT OR IGNORE INTO link
                     (article_id, ref_article_id)
                     SELECT ?, id
-                    FROM article AS a LEFT JOIN redirect AS r ON r.title=a.title
-                      LEFT JOIN article AS ra ON ra.title=r.to_title
+                    FROM article
                     WHERE title IN (""" + \
                     ",".join( [ "'"+title.replace("'","''")+"'" for title in children ] ) + ")"
             if self._phase==2: # don't link to pages not about living people
