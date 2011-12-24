@@ -64,9 +64,9 @@ tagMediawiki = 'mediawiki'
 default_db_name = 'wppages.sqlite '
 
 # Pre-copiled regular expressions:
-category_re = re.compile( '\[\[Category:(\S[^]\|]+)', re.I )
+category_re = re.compile( '\[\[Category:([^]\|]+)(?:\||\])', re.I )
 # Links to the child pages:
-child_re = re.compile( '\[\[(?!Category:)(\S[^]\|]+)', re.I)
+child_re = re.compile( '\[\[(?!Category:)([^]\|]+)(?:\||\])', re.I)
 # Death date:
 death_date_re = re.compile( '(?:\| ?DATE OF DEATH|\| ?death_date)[^=]*=\s*((?!<!--)[^\s[|][^|[]*)', re.I )
 # External links:
@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS article (
     id               INTEGER PRIMARY KEY,
     title            TEXT NOT NULL UNIQUE,
     -- Wikipedia DB ID:
-    page_id          INTEGER NULL UNIQUE,
+    page_id          INTEGER NULL /*UNIQUE*/,
     -- Article is about a living person (deteced based on the category)
     is_living_person BOOLEAN NULL,
     parsed_at        DATETIME NULL
@@ -260,6 +260,7 @@ CREATE TABLE IF NOT EXISTS redirect (
     -- Redirect to page:
     to_article_id INTEGER NOT NULL,
     to_title TEXT NOT NULL );
+CREATE INDEX IF NOT EXISTS redirect_idx ON redirect(article_id);
 
 CREATE VIEW IF NOT EXISTS direct_relation
 AS
@@ -484,8 +485,9 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             self.refresh_progress_bar()
             # After 2nd pass "re-link" redirected pages to the new targets:
             if self._phase==2:
+                print "Relinking pages according to the redirects... Please wait\n"
                 self.db_execute(
-                    "UPDATE link "
+                    "UPDATE OR IGNORE link "
                     "SET ref_article_id = (SELECT to_article_id FROM redirect WHERE redirect.article_id=link.ref_article_id) "
                     "WHERE ref_article_id IN (SELECT article_id FROM redirect)")
             # The end of XML dump file reached - do clean-up:
