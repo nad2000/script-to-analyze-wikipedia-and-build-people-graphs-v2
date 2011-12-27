@@ -64,9 +64,9 @@ tagMediawiki = 'mediawiki'
 default_db_name = 'wppages.sqlite '
 
 # Pre-copiled regular expressions:
-category_re = re.compile( '\[\[Category:([^]\|]+)(?:\||\])', re.I )
+category_re = re.compile( '\[\[Category:(\S[^]\|]+)', re.I )
 # Links to the child pages:
-child_re = re.compile( '\[\[(?!Category:)([^]\|]+)(?:\||\])', re.I)
+child_re = re.compile( '\[\[(?!Category:)(\S[^]\|]+)', re.I)
 # Death date:
 death_date_re = re.compile( '(?:\| ?DATE OF DEATH|\| ?death_date)[^=]*=\s*((?!<!--)[^\s[|][^|[]*)', re.I )
 # External links:
@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS article (
     id               INTEGER PRIMARY KEY,
     title            TEXT NOT NULL UNIQUE,
     -- Wikipedia DB ID:
-    page_id          INTEGER NULL /*UNIQUE*/,
+    page_id          INTEGER NULL UNIQUE,
     -- Article is about a living person (deteced based on the category)
     is_living_person BOOLEAN NULL,
     parsed_at        DATETIME NULL
@@ -259,8 +259,7 @@ CREATE TABLE IF NOT EXISTS redirect (
     title         TEXT NOT NULL UNIQUE,
     -- Redirect to page:
     to_article_id INTEGER NOT NULL,
-    to_title TEXT NOT NULL );
-CREATE INDEX IF NOT EXISTS redirect_idx ON redirect(article_id);
+    to_title      TEXT NOT NULL );
 
 CREATE VIEW IF NOT EXISTS direct_relation
 AS
@@ -293,7 +292,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
     AND l.article_id <> l2.ref_article_id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
-  JOIN article AS c ON c.id = l.ref_article_id  AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL)
+  JOIN article AS c ON c.id = l.ref_article_id
   /* ORDER BY 1,2 */ );
 
 -- DROP VIEW IF EXISTS relation;
@@ -322,7 +321,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
     AND l.article_id <> l2.ref_article_id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
-  JOIN article AS c ON c.id = l.ref_article_id  AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL)
+  JOIN article AS c ON c.id = l.ref_article_id
 /*ORDER BY 1,2*/ );
 """)
         self._cn.commit()
@@ -483,20 +482,13 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                 self.parse_page()
         elif tag == tagMediawiki:
             self.refresh_progress_bar()
-            # After 2nd pass "re-link" redirected pages to the new targets:
-            if self._phase==2:
-                print "Relinking pages according to the redirects... Please wait\n"
-                self.db_execute(
-                    "UPDATE OR IGNORE link "
-                    "SET ref_article_id = (SELECT to_article_id FROM redirect WHERE redirect.article_id=link.ref_article_id) "
-                    "WHERE ref_article_id IN (SELECT article_id FROM redirect)")
             # The end of XML dump file reached - do clean-up:
             self.db().commit()
             self.cur().close()
             print "\n%d articles processed." % self._page_count
             if not( self._dry_run):
                 # if "--dry-run" option set, don't vacuum DB:
-                print "Parsing complete! Please wait until DB compacting is finised..."
+                print "Parsing complete! Please wait until DB compacting is finished..."
                 self.db().execute('VACUUM')
                 self.db().execute('ANALYZE')
 
@@ -635,21 +627,6 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             # on the secon pass we dealing only with pages not about living peaple
             # as all pages about living people had been processed on the first pass
             is_living_person = False
-
-
-##        if self._title in [
-##                'Boris Becker',
-##                'Billy Burke (actor)',
-##                'Karl Lagerfeld',
-##                'Richard Branson',
-##                'Kevin Durant',
-##                'Lady Gaga',
-##                'Kelly Slater',
-##                'Muhammad Yunus',
-##                'Corey Flynn',
-##                'David Beckham']:
-##            with codecs.open( "filtered_stats.txt", 'a', encoding='utf-8') as o:
-##                o.write( u"\n== %s ==\n live: %s, phase: %s, line: %d" % (self._title, is_living_person, phase, self._parser.CurrentLineNumber,) )
 
         if phase==1:
             article_id = None
