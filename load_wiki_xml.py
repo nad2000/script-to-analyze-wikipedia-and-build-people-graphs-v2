@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS article (
     id               INTEGER PRIMARY KEY,
     title            TEXT NOT NULL UNIQUE,
     -- Wikipedia DB ID:
-    page_id          INTEGER NULL UNIQUE,
+    page_id          INTEGER NULL /*UNIQUE*/,
     -- Article is about a living person (deteced based on the category)
     is_living_person BOOLEAN NULL,
     parsed_at        DATETIME NULL
@@ -292,7 +292,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
     AND l.article_id <> l2.ref_article_id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
-  JOIN article AS c ON c.id = l.ref_article_id
+  JOIN article AS c ON c.id = l.ref_article_id AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL
   /* ORDER BY 1,2 */ );
 
 -- DROP VIEW IF EXISTS relation;
@@ -321,7 +321,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
     AND l.article_id <> l2.ref_article_id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
-  JOIN article AS c ON c.id = l.ref_article_id
+  JOIN article AS c ON c.id = l.ref_article_id AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL
 /*ORDER BY 1,2*/ );
 """)
         self._cn.commit()
@@ -482,6 +482,13 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
                 self.parse_page()
         elif tag == tagMediawiki:
             self.refresh_progress_bar()
+            # After 2nd pass "re-link" redirected pages to the new targets:
+            if self._phase==2:
+                print "Relinking pages according to the redirects... Please wait\n"
+                self.db_execute(
+                    "UPDATE OR IGNORE link "
+                    "SET ref_article_id = (SELECT to_article_id FROM redirect WHERE redirect.article_id=link.ref_article_id) "
+                    "WHERE ref_article_id IN (SELECT article_id FROM redirect)")
             # The end of XML dump file reached - do clean-up:
             self.db().commit()
             self.cur().close()
