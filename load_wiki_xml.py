@@ -261,7 +261,9 @@ CREATE TABLE IF NOT EXISTS redirect (
     to_article_id INTEGER NOT NULL,
     to_title      TEXT NOT NULL );
 
-CREATE VIEW IF NOT EXISTS direct_relation
+
+-- DROP VIEW IF EXISTS _direct_relation;
+CREATE VIEW IF NOT EXISTS _direct_relation
 AS
 SELECT
     'http://en.wikipedia.org/wiki/'||REPLACE(s_title,' ','_') AS wikipedia_url_source,
@@ -275,8 +277,11 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id AND s.is_living_person
   JOIN article AS t ON t.id = l.ref_article_id AND t.is_living_person
   ORDER BY 1,2 );
 
--- DROP VIEW indirect_relation;
-CREATE VIEW IF NOT EXISTS indirect_relation
+-- DROP TABLE IF EXISTS direct_relation;
+CREATE TABLE IF NOT EXISTS direct_relation AS SELECT * FROM _direct_relation WHERE 0=1;
+
+-- DROP VIEW IF EXISTS _indirect_relation;
+CREATE VIEW IF NOT EXISTS _indirect_relation
 AS
 SELECT
     'http://en.wikipedia.org/wiki/'||REPLACE(s_title,' ','_') AS wikipedia_url_source,
@@ -292,11 +297,14 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
     AND l.article_id <> l2.ref_article_id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
-  JOIN article AS c ON c.id = l.ref_article_id AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL
-  /* ORDER BY 1,2 */ );
+  JOIN article AS c ON c.id = l.ref_article_id AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL )
+ /* ORDER BY 1,2 */  );
 
--- DROP VIEW IF EXISTS relation;
-CREATE VIEW IF NOT EXISTS relation
+-- DROP TABLE IF EXISTS indirect_relation;
+CREATE TABLE IF NOT EXISTS indirect_relation AS SELECT * FROM _indirect_relation WHERE 0=1;
+
+-- DROP VIEW IF EXISTS _relation;
+CREATE VIEW IF NOT EXISTS _relation
 AS
 SELECT
     'http://en.wikipedia.org/wiki/'||REPLACE(s_title,' ','_') AS wikipedia_url_source,
@@ -321,7 +329,7 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
     AND l.article_id <> l2.ref_article_id
   JOIN article AS t ON t.id = l2.ref_article_id AND t.is_living_person
     AND t.id <> s.id
-  JOIN article AS c ON c.id = l.ref_article_id AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL
+  JOIN article AS c ON c.id = l.ref_article_id AND (NOT( c.is_living_person)  OR c.is_living_person IS NULL )
 /*ORDER BY 1,2*/ );
 """)
         self._cn.commit()
@@ -484,11 +492,19 @@ FROM article AS s JOIN link AS l ON l.article_id = s.id
             self.refresh_progress_bar()
             # After 2nd pass "re-link" redirected pages to the new targets:
             if self._phase==2:
-                print "Relinking pages according to the redirects... Please wait\n"
+                print "\nRelinking pages according to the redirects... Please wait\n"
                 self.db_execute(
                     "UPDATE OR IGNORE link "
                     "SET ref_article_id = (SELECT to_article_id FROM redirect WHERE redirect.article_id=link.ref_article_id) "
                     "WHERE ref_article_id IN (SELECT article_id FROM redirect)")
+
+                print "Materializing direct relationship views... Please wait\n"
+                self.db_execute("DELETE FROM direct_relation" )
+                self.db_execute("INSERT INTO direct_relation SELECT * FROM _direct_relation" )
+                print "Materializing indirect relationship views... Please wait\n"
+                self.db_execute("DELETE FROM indirect_relation" )
+                self.db_execute("INSERT INTO indirect_relation SELECT * FROM _indirect_relation" )
+
             # The end of XML dump file reached - do clean-up:
             self.db().commit()
             self.cur().close()
